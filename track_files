@@ -1,0 +1,100 @@
+#!/bin/dash
+
+# this file should be called at every tigger-command that changes 
+# the status of files
+# i.e. tigger-add, tigger-commit, tigger-rm
+# so for every action we want to store everything in a file to track everything
+
+# don't run if .tigger doesnt exist 
+if ! [ -d ".tigger" ]; then 
+    exit 1
+fi 
+
+# create our tracker file if doesnt exist
+if ! [ -e ".tigger/status_tracker" ]; then 
+    touch ".tigger/status_tracker"
+fi 
+
+opt1="- file changed, different changes staged for commit"
+opt2="- file changed, changes staged for commit"
+opt3="- file changed, changes not staged for commit"
+opt4="- file deleted"
+opt5="- deleted"
+opt6="- same as repo"
+opt7="- added to index"
+opt8="- untracked"
+
+
+# go through files in working directory 
+for file in *; do 
+    if [ -e ".tigger/commit_log" ]; then 
+        # get the specified file in the latest commit directory 
+        curr_branch=$(cat ".tigger/branch_head")
+        commit_num=$(grep -E "branch.*: $curr_branch" ".tigger/commit_log" | tail -n 1 | cut -d' ' -f4)
+        commit_file=".tigger/commit_queue/$commit_num/$file"
+    fi 
+
+    # file that would be in the index 
+    index_file=".tigger/add_queue/$file"
+    msg=""
+    if [ -e "$file" ] && [ -e "$index_file" ] && [ -e "$commit_file" ]; then
+        if ! diff "$file" "$index_file" >/dev/null && ! diff "$index_file" "$commit_file" >/dev/null; then 
+            msg="$file $opt1" # file changed, different changes staged for commit
+        elif diff "$file" "$index_file" >/dev/null && ! diff "$index_file" "$commit_file" >/dev/null; then 
+            msg="$file $opt2" # file changed, changes staged for commit
+        elif ! diff "$file" "$index_file" >/dev/null && diff "$index_file" "$commit_file" >/dev/null; then 
+            msg="$file $opt3" # file changed, changes not staged for commit
+        elif diff "$file" "$index_file" >/dev/null && diff "$index_file" "$commit_file" >/dev/null; then 
+            msg="$file $opt6" # same as repo
+        fi
+    elif ! [ -e "$index_file" ] && [ -e "$file" ]; then 
+        msg="$file $opt8" # "- untracked"
+    elif [ -e "$index_file" ] && ! [ -e "$commit_file" ]; then 
+        msg="$file $opt7" # "- added to index"
+        if ! diff "$file" "$index_file" >/dev/null; then
+            msg="$msg, file changed"
+        fi
+    fi
+    
+    # if the file doesnt have a line in this tracker, append it to the file 
+    if ! grep -E "^$file - " ".tigger/status_tracker" >/dev/null; then
+        echo "$msg" >>".tigger/status_tracker"
+    else 
+        # otherwise use grep to find this line and edit it 
+        # use -i option to edit file in place
+        test "$msg" != "" && sed -Ei "s/^$file.*/$msg/" ".tigger/status_tracker"
+    fi
+done
+
+# now check for deleted files
+while read line; do
+    file=$(echo "$line" | cut -d' ' -f1)
+    if [ "$file" = "" ] || [ "$file" = " " ]; then 
+        continue
+    fi 
+    
+    if [ -e ".tigger/commit_tracker" ]; then 
+        # get the specified file in the latest commit directory 
+        commit_num=$(cat ".tigger/commit_tracker" | cut -d' ' -f1)
+        commit_file=".tigger/commit_queue/$commit_num/$file"
+    fi 
+
+    # file that would be in the index 
+    index_file=".tigger/add_queue/$file"
+    
+    if ! [ -e "$file" ] && [ -e "$index_file" ] && ! [ -e "$commit_file" ]; then 
+        msg="added to index, file deleted"
+        sed -Ei "s/^$file.*/$file - $msg/" ".tigger/status_tracker"
+    fi
+    
+    if ! [ -e "$file" ] && ! [ -e ".tigger/add_queue/$file" ]; then 
+        sed -Ei "s/^$file.*/$file $opt5/" ".tigger/status_tracker"
+    elif ! [ -e "$file" ] && [ -e ".tigger/add_queue/$file" ]; then 
+        if grep -E "^$file - added to index" ".tigger/status_tracker" >/dev/null; then 
+            sed -Ei "s/^$file.*/$file $opt7, file deleted/" ".tigger/status_tracker"
+        else 
+            sed -Ei "s/^$file.*/$file $opt4/" ".tigger/status_tracker"        
+        fi 
+    fi
+    
+done <.tigger/status_tracker

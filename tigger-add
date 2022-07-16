@@ -1,0 +1,35 @@
+#!/bin/dash
+
+if ! [ -d '.tigger' ]; then 
+    echo "tigger-add: error: tigger repository directory .tigger not found" >&2; exit 1
+fi
+
+# our index is a directory that contains all files ready to be committed
+if ! [ -d ".tigger/add_queue" ]; then 
+    mkdir ".tigger/add_queue"
+fi
+
+# loop through our command line args and add files to this "index"
+for file in "$@"; do 
+    # if we add a non-existent file (in the context of working directory)
+    # but it exists in the index, delete it from the index
+    if ! [ -e "$file" ]; then 
+        del_from_index=0
+    
+        # now check if it exists in the index 
+        for index_file in ".tigger/add_queue"/*; do 
+            if [ "$file" = "$(basename "$index_file")" ]; then 
+                rm "$index_file"
+                del_from_index=1
+            fi
+        done 
+        
+        if [ $del_from_index -eq 0 ]; then 
+            echo "tigger-add: error: can not open '$file'" >&2; exit 1
+        fi
+    else 
+        cp "$file" ".tigger/add_queue/$file"
+    fi
+done 
+
+track_files

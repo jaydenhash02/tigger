@@ -1,0 +1,32 @@
+#!/bin/dash
+
+# check right number of arguments were given 
+if [ "$#" != 1 ]; then 
+    echo "usage: tigger-show <commit>:<filename>" >&2; exit 1
+fi 
+
+commit_num=$(echo "$1" | cut -d':' -f1)
+file=$(echo "$1" | cut -d':' -f2)
+
+# if invalid object
+if [ "$commit_num" = "$1" ] || [ "$file" = "$1" ]; then 
+    echo "tigger-show: error: invalid object $1" >&2; exit 1
+fi 
+
+if [ -n "$commit_num" ]; then 
+    if ! [ -d ".tigger/commit_queue/$commit_num" ]; then 
+        echo "tigger-show: error: unknown commit '$commit_num'" >&2; exit 1
+    fi 
+    
+    if ! [ -e ".tigger/commit_queue/$commit_num/$file" ]; then 
+        echo "tigger-show: error: '$file' not found in commit $commit_num" >&2; exit 1
+    fi 
+    
+    cat ".tigger/commit_queue/$commit_num/$file"
+else 
+    if ! [ -e ".tigger/add_queue/$file" ]; then 
+        echo "tigger-show: error: '$file' not found in index" >&2; exit 1
+    fi 
+    
+    cat ".tigger/add_queue/$file"
+fi

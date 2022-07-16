@@ -1,0 +1,83 @@
+#!/bin/dash
+
+check_files() {
+    file="$1"
+    index_file="$2"
+    commit_file="$3"
+    
+    # first check if there are staged changes in the index (file in working dir = file in index
+    # and file in index != file in repo)
+    if diff "$file" "$index_file" >/dev/null && ! diff "$index_file" "$commit_file" >/dev/null; then 
+        echo "tigger-rm: error: '$file' has staged changes in the index" >&2; exit 1        
+        # check (file in index) != (file in working_dir) and (file in index) != (file in repo)
+    elif ! diff "$index_file" "$file" >/dev/null && ! diff "$index_file" "$commit_file" >/dev/null; then 
+        echo "tigger-rm: error: '$file' in index is different to both the working file and the repository" >&2; exit 1
+        # check that working dir file = index file
+    elif ! diff "$file" "$commit_file" >/dev/null && diff "$index_file" "$commit_file" >/dev/null; then 
+        echo "tigger-rm: error: '$file' in the repository is different to the working file" >&2; exit 1    
+    fi
+}
+
+force=0
+cache=0
+
+# store the files to delete in a string so we can delete after error checking
+files_to_delete=""
+
+for file in "$@"; do 
+    if [ "$file" = '--cached' ]; then 
+        cache=1
+        continue
+    elif [ "$file" = '--force' ]; then 
+        force=1
+        continue
+    fi
+
+    index_file=".tigger/add_queue/$file"
+    branch=$(cat ".tigger/branch_head")
+    if ! [ -e "$file" ] || ! [ -e "$index_file" ]; then 
+        echo "tigger-rm: error: '$file' is not in the tigger repository" >&2; exit 1
+    fi 
+    
+    if [ $force -eq 1 ] && [ $cache -eq 1 ]; then 
+        test -e "$index_file" && rm "$index_file"
+    elif [ $force -eq 1 ]; then 
+        test -e "$index_file" && rm "$index_file"
+        test -e "$file" && rm "$file"
+        test -e ".tigger/status_tracker" && sed -Ei "/^$file/d" ".tigger/status_tracker" >/dev/null
+    elif [ $cache -eq 1 ]; then 
+        latest_commit=$(grep -E "branch.*: $branch" ".tigger/commit_log" | tail -n 1 | cut -d' ' -f4)
+        commit_file=".tigger/commit_queue/$latest_commit/$file"
+        if [ -e "$commit_file" ]; then 
+            if ! diff "$index_file" "$file" >/dev/null && ! diff "$index_file" "$commit_file" >/dev/null; then 
+                echo "tigger-rm: error: '$file' in index is different to both the working file and the repository" >&2; exit 1
+            fi
+        fi
+        # store the files to delete in a string so we can delete after error checking
+        
+        files_to_delete="$files_to_delete $index_file"
+    else 
+        # no option specified, try remove from both index and working dir
+        # but notify user of possible loss of file
+        if [ -e "$file" ] && [ -e "$index_file" ]; then 
+            latest_commit=$(grep -E "branch.*: $branch" ".tigger/commit_log" | tail -n 1 | cut -d' ' -f4)
+            commit_file=".tigger/commit_queue/$latest_commit/$file"
+            if [ -e "$commit_file" ]; then 
+                check_files "$file" "$index_file" "$commit_file"
+                
+                # store the files to delete in a string so we can delete after error checking
+                
+                files_to_delete="$files_to_delete $index_file $file"
+            else
+                echo "tigger-rm: error: '$file' has staged changes in the index" >&2; exit 1        
+            fi 
+        fi
+    fi
+done 
+
+
+for file in $files_to_delete; do 
+    rm "$file"
+done
+
+track_files

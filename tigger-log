@@ -1,0 +1,9 @@
+#!/bin/dash
+
+if ! [ -e ".tigger/commit_log" ]; then 
+    exit 1
+fi 
+
+# ALSO ONLY SHOW MATCHES FROM CURRENT BRANCH
+branch=$(cat ".tigger/branch_head")
+tac ".tigger/commit_log" | grep -E "$branch " | sed -E "s/branch.*: .* commit: //" | sort -r -t' ' -k1,1

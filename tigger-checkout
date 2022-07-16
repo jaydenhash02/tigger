@@ -1,0 +1,88 @@
+#!/bin/dash
+
+# incorrect usage
+if [ "$#" != 1 ]; then 
+    echo "usage: tigger-checkout <branch>" >&2; exit 1
+fi
+
+# find the right branch from .tigger/list_branches
+branch="$1" # branch = branch after checking out
+
+# if we cannot find the branch
+if ! grep -E "^$branch$" ".tigger/list_branches" >/dev/null; then 
+    echo "tigger-checkout: error: unknown branch '$branch'" >&2; exit 1
+fi
+
+
+# so get our current branch 
+prev_branch=$(cat ".tigger/branch_head") # prev_branch = branch before checking out
+store_files "$prev_branch"          # STORE A COPY OF THE FILES IN OUR CURRENT BRANCH BEFORE CHECKOUT
+
+# look at the folder of the latest commit of the branch we will checkout into
+# whatever files that are in the working_dir or index that don't exist in the commit should get deleted
+latest_commit_num_before=$(grep -E "branch.*: $prev_branch " ".tigger/commit_log" | tail -n 1 | cut -d' ' -f4)
+latest_commit_num_after=$(grep -E "branch.*: $branch " ".tigger/commit_log" | tail -n 1 | cut -d' ' -f4)
+
+
+# check for files that could be overwritten
+files_potentially_overwritten=""
+for file in *; do 
+    # skip if this file is already in the commit_queue
+    if [ -e ".tigger/commit_queue/$latest_commit_num_before/$file" ]; then
+        continue
+    fi
+    
+    co_branch_file=".tigger/branch_storage/$branch/commit_queue/$latest_commit_num_after/$file"
+    if [ -e "$co_branch_file" ] && ! diff "$file" "$co_branch_file" >/dev/null; then
+        files_potentially_overwritten="$files_potentially_overwritten $file"
+    fi
+
+done 
+
+if [ -n "$files_potentially_overwritten" ]; then
+    echo "tigger-checkout: error: Your changes to the following files would be overwritten by checkout:" >&2
+    for file in $files_potentially_overwritten; do
+        echo "$file"
+    done 
+    exit 1
+fi 
+
+
+for file in ".tigger/commit_queue/$latest_commit_num_before"/*; do 
+    raw_filename=$(basename "$file")
+    working_dir_file="$raw_filename"
+    index_file=".tigger/add_queue/$raw_filename"
+    
+    if [ -e "$working_dir_file" ]; then 
+        if diff "$file" "$working_dir_file" >/dev/null; then 
+            rm "$working_dir_file"
+        fi
+    fi 
+    
+    if [ -e "$index_file" ]; then
+        if diff "$file" "$index_file" >/dev/null; then 
+            rm "$index_file"
+        fi
+    fi
+done 
+
+
+rm -rf ".tigger/commit_queue"/*
+cp -rT ".tigger/branch_storage/$branch/commit_queue"  ".tigger/commit_queue"
+
+
+for file in ".tigger/commit_queue/$latest_commit_num_after"/*; do 
+    raw_filename=$(basename "$file")
+    if ! [ -e "$raw_filename" ]; then 
+        cp "$file" "$raw_filename"    
+    fi
+    
+    if ! [ -e ".tigger/add_queue/$raw_filename" ]; then 
+        cp "$file" ".tigger/add_queue/$raw_filename"
+    fi
+done 
+
+
+# change the reference of which branch we are on 
+echo "$branch" >".tigger/branch_head" 
+echo "Switched to branch '$branch'"

@@ -1,0 +1,19 @@
+#!/bin/dash
+
+if [ -d ".tigger" ]; then 
+    echo "tigger-init: error: .tigger already exists" >&2
+    exit 1
+fi
+
+# make the .tigger repo
+mkdir ".tigger"
+echo "Initialized empty tigger repository in .tigger"
+
+
+# initialise a file that contains a list of the branches
+echo "master" >".tigger/list_branches"
+
+# create a file that tracks the current branch we are one 
+echo "master" >".tigger/branch_head"
+
+mkdir ".tigger/branch_storage"

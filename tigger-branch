@@ -1,0 +1,105 @@
+#!/bin/dash
+
+# if the commit_tracker file does not exist yet, 
+# the first commit has not been made 
+if ! [ -e ".tigger/commit_tracker" ]; then 
+    echo "tigger-branch: error: this command can not be run until after the first commit" >&2; exit 1
+fi
+
+
+# check incorrect usage
+if [ "$#" -gt 2 ]; then 
+    echo "usage: tigger-branch [-d] <branch>" >&2; exit 1
+fi
+
+# no arguments given, just show the list of branches
+if [ "$#" -eq 0 ]; then 
+    sort ".tigger/list_branches"
+    
+    # add branch to list of branches
+elif [ "$#" -eq 1 ]; then
+    branch="$1"
+    # if the branch does not exist in the list_branches we append to file 
+    # otherwise show an error
+    if ! grep -E "^$branch$" ".tigger/list_branches" >/dev/null; then 
+        echo "$branch" >>".tigger/list_branches"
+    else    
+        echo "tigger-branch: error: branch '$branch' already exists" >&2; exit 1
+    fi 
+
+    # create a new storage for the branch 
+    store_files "$branch"
+    
+    # get the latest commit_num and message of the current branch we are in when we make this new branch
+    curr_branch=$(cat ".tigger/branch_head")
+
+    # track when we make our branches on the commit-log
+    
+    # copy all the commit_msgs from our current branch into the new branch
+    grep -E "branch.*: $curr_branch " ".tigger/commit_log" > ".tigger/copy_tigger_logs"
+    while read -r line; do
+        commit_num=$(echo "$line" | cut -d' ' -f4)
+        message=$(echo "$line" | sed -E "s/branch.*: $curr_branch commit: [0-9]+ //")
+        echo "branch(new): $branch commit: $commit_num $message" >>".tigger/commit_log"
+    done <".tigger/copy_tigger_logs"
+    
+    # remove when done
+    if [ -e ".tigger/copy_tigger_logs" ]; then
+        rm ".tigger/copy_tigger_logs"
+    fi 
+    
+    # otherwise option to delete a branch
+else 
+    if [ "$1" != '-d' ]; then 
+        echo "usage: tigger-branch [-d] <branch>" >&2; exit 1
+    fi
+    
+    branch="$2"
+    
+    # cannot delete master branch
+    if [ "$branch" = 'master' ]; then 
+        echo "tigger-branch: error: can not delete branch 'master'" >&2; exit 1
+    fi
+    
+    # now use grep to search for the branch
+    
+    # if the branch does not exist
+    if ! grep -E "^$branch$" ".tigger/list_branches" >/dev/null; then 
+        echo "tigger-branch: error: branch '$branch' doesn't exist" >&2; exit 1
+    fi
+    
+    
+    
+    # so then the branch must exist
+    # a branch is unmerged if its latest commit_num does not exist in any other branch
+    # find the latest commit_num for that branch
+    latest_commit_num=$(grep -E "branch.*: $branch" ".tigger/commit_log" | tail -n 1 | cut -d' ' -f4)
+    
+    list_branches=$(cat ".tigger/list_branches")
+    free_to_delete=0
+    for branch_scroll in $list_branches; do 
+        # skip if we encounter the same branch 
+        if [ "$branch_scroll" = "$branch" ]; then 
+            continue
+        fi
+        # if the latest commit_num of the branch we are trying to delete exists in another branch
+        # changes should be merged
+        # we are clear to delete this branch
+        if [ -d ".tigger/branch_storage/$branch_scroll/commit_queue/$latest_commit_num" ]; then 
+            free_to_delete=1
+        fi 
+    done 
+    
+    if [ "$free_to_delete" -eq 0 ]; then 
+        echo "tigger-branch: error: branch '$branch' has unmerged changes" >&2; exit 1
+    fi 
+    
+    # delete the branch from the list of branches
+    sed -Ei "/^$branch$/d" ".tigger/list_branches"
+    
+    # delete the storage for that branch
+    rm -rf ".tigger/branch_storage/$branch"
+    
+    echo "Deleted branch '$branch'"
+    
+fi

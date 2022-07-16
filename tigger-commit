@@ -1,0 +1,85 @@
+#!/bin/dash
+
+# incorrect usage
+if [ "$#" != 2 ] && [ "$#" != 3 ]; then 
+    echo "usage: tigger-commit [-a] -m commit-message" >&2; exit 1
+fi 
+
+if [ "$1" = '-a' ] && [ "$2" = '-m' ]; then 
+    message="$3"
+elif [ "$1" = '-m' ]; then
+    message="$2"
+else 
+    echo "usage: tigger-commit [-a] -m commit-message" >&2; exit 1
+fi 
+
+# check if -a option was also specified 
+if [ "$1" = '-a' ]; then 
+    # so then go thru files in the index 
+    # copy over the new versions from the working directory 
+    for file in ".tigger/add_queue"/*; do 
+        raw_filename=$(basename "$file")
+        if [ -e "$raw_filename" ]; then 
+            cp "$raw_filename" "$file"
+        fi 
+    done 
+fi 
+
+commit_num=0
+if [ -e ".tigger/commit_tracker" ]; then 
+    # if it exists take the number and increment it 
+    commit_num=$(cut -d' ' -f1 ".tigger/commit_tracker")
+    commit_num=$((commit_num + 1))
+fi 
+
+
+# create a directory commit_queue that stores subdirectories
+if ! [ -d ".tigger/commit_queue" ]; then 
+    mkdir ".tigger/commit_queue"
+fi 
+
+
+# so then within this new directory, create subdirectories each with their name as the commit number 
+# remove the files from the add_queue and place them into the subdirectory 
+mkdir ".tigger/commit_queue/$commit_num"
+
+# now add files from the index
+for file in ".tigger/add_queue"/*; do 
+    raw_filename=$(basename "$file")
+    if [ -e "$file" ]; then 
+        cp "$file" ".tigger/commit_queue/$commit_num/$raw_filename"
+    fi
+done 
+
+# check if the files in the newest_commit are the same as the ones in the previous commit
+# if this is true: there is nothing to commit and reverse our additions
+# compare this commit directory and previous directory
+
+# commit_num=latest_commit
+if [ -e ".tigger/commit_log" ]; then 
+    branch=$(cat ".tigger/branch_head")
+    latest_commit=$(grep -E "branch.*: $branch" ".tigger/commit_log" | tail -n 1 | cut -d' ' -f4)
+    if [ "$commit_num" -gt 0 ] && diff -r -q ".tigger/commit_queue/$latest_commit" ".tigger/commit_queue/$commit_num" >/dev/null; then 
+        rm -rf ".tigger/commit_queue/$commit_num"
+        commit_num=$((commit_num - 1))
+        # echo "$commit_num $message" >".tigger/commit_tracker" 
+        echo "nothing to commit" >&2; exit 1  
+    fi
+fi 
+
+
+track_files
+
+# if we commit anything deleted, remove the line
+test -e ".tigger/status_tracker" && sed -Ei '/.* - deleted/d' ".tigger/status_tracker"
+
+
+# store our commit history
+# retrieve our current branch
+branch=$(cat ".tigger/branch_head")
+echo "Committed as commit $commit_num"
+echo "$commit_num $message" >".tigger/commit_tracker" 
+
+store_files "$branch"
+
+echo "branch: $branch commit: $commit_num $message" >>".tigger/commit_log"

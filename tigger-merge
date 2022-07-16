@@ -1,0 +1,139 @@
+#!/bin/dash
+if [ "$#" = 1 ]; then 
+    echo "tigger-merge: error: empty commit message" >&2; exit 1
+fi 
+
+# check that $2 (branch) exists
+branch="$1"
+if ! grep -E "^$branch$" ".tigger/list_branches" >/dev/null; then 
+    echo "tigger-merge: error: unknown branch '$branch'" >&2; exit 1
+fi
+
+if [ "$#" = 2 ] || [ "$2" != '-m' ] || [ "$#" -gt 3 ]; then 
+    echo "usage: tigger-merge <branch|commit> -m message" >&2; exit 1
+fi 
+
+curr_branch=$(cat ".tigger/branch_head")
+
+# curr_branch = branch we are currently on 
+# branch = branch we are trying to merge into our current branch
+
+# copy the latest commit from branch to curr_branch
+
+latest_commit_num_merge=$(grep -E "branch.*: $branch " ".tigger/commit_log" | tail -n 1 | cut -d' ' -f4)
+latest_commit_num_curr=$(grep -E "branch.*: $curr_branch " ".tigger/commit_log" | tail -n 1 | cut -d' ' -f4)
+sec_latest_commit_num_curr=$(grep -E "branch.*: $curr_branch " ".tigger/commit_log" | tail -n 2 | head -n 1 | cut -d' ' -f4)
+
+
+merge_commits=".tigger/branch_storage/$branch/commit_queue/$latest_commit_num_merge"
+prev_curr_commits=".tigger/commit_queue/$sec_latest_commit_num_curr"
+curr_commits=".tigger/commit_queue/$latest_commit_num_curr"
+
+# check if the latest commit in current branch is ahead of latest commit we are trying to merge
+# go through the files in latest commit of current branch to check for files we cannot merge
+unmergeable_files=""
+if [ "$latest_commit_num_curr" -gt "$latest_commit_num_merge" ]; then 
+    for file in "$curr_commits"/*; do 
+        raw_filename=$(basename "$file")
+        merge_file="$merge_commits/$raw_filename"
+        prev_commit_file="$prev_curr_commits/$raw_filename"
+        if [ -e  "$merge_file" ]; then 
+            if ! diff "$file" "$merge_file" >/dev/null && ! diff "$prev_commit_file" "$merge_file" >/dev/null && 
+                ! diff "$file" "$prev_commit_file" >/dev/null; then 
+                unmergeable_files="$unmergeable_files $raw_filename"
+            fi 
+        fi 
+    done
+fi 
+
+if [ -n "$unmergeable_files" ]; then 
+    echo "tigger-merge: error: These files can not be merged: " >&2
+    for f in $unmergeable_files; do 
+        echo "$f"
+    done 
+    
+    exit 1
+fi 
+
+
+# check if the merge will be a commit
+commit_merge=0
+for file in "$merge_commits"/*; do 
+    raw_filename=$(basename "$file")
+    if ! [ -e "$raw_filename" ] && [ "$latest_commit_num_curr" -gt "$latest_commit_num_merge" ]; then 
+        commit_merge=1
+    fi 
+done
+
+if [ "$commit_merge" -eq 1 ]; then 
+    latest_commit_latest=$(cut -d' ' -f1 ".tigger/commit_tracker")
+    latest_commit_num_curr=$((latest_commit_latest + 1))
+    mkdir ".tigger/commit_queue/$latest_commit_num_curr"
+fi
+
+new_curr_commits=".tigger/commit_queue/$latest_commit_num_curr"
+
+if [ "$latest_commit_num_curr" -gt "$latest_commit_num_merge" ]; then 
+    for file in "$merge_commits"/*; do 
+        raw_filename=$(basename "$file")
+        # if its a commit_merge, have to create new latest commit subdirectory
+        # copy in the files from the merge branch latest commit that does not exist in our current branch latest commit
+        if ! [ -e "$curr_commits/$raw_filename" ]; then 
+            cp "$file" "$new_curr_commits/$raw_filename"
+        else
+            # if they do exist we have to check the versions of the file
+            # cn = commit_num
+            # condition is: 2nd_last_curr_cn < last_merge_cn < last_curr_cn
+            
+            # so if the file from the prev_commit has not been changed
+            # that means it could been updated within the merge branch
+            if diff "$prev_curr_commits/$raw_filename" "$curr_commits/$raw_filename" >/dev/null; then
+                if ! diff "$file" "$curr_commits/$raw_filename" >/dev/null; then
+                    cp "$file" "$new_curr_commits/$raw_filename"
+                fi
+            fi
+        fi
+    done
+    
+    # copy in missing files
+    if [ "$commit_merge" -eq 1 ]; then 
+        for file in "$curr_commits"/*; do 
+            raw_filename=$(basename "$file")
+            if ! [ -e "$new_curr_commits/$raw_filename" ]; then 
+                cp "$file" "$new_curr_commits/$raw_filename"
+            fi 
+        done 
+    fi
+else
+    cp -rT ".tigger/branch_storage/$branch/commit_queue/$latest_commit_num_merge" ".tigger/commit_queue/$latest_commit_num_merge"
+fi
+
+if [ "$latest_commit_num_curr" -gt "$latest_commit_num_merge" ]; then 
+    latest_commit_num_both="$latest_commit_num_curr"
+else 
+    latest_commit_num_both="$latest_commit_num_merge"
+fi 
+
+# copy from repo to working dir
+for file in ".tigger/commit_queue/$latest_commit_num_both"/*; do 
+    raw_filename=$(basename "$file")
+    cp "$file" "$raw_filename"    
+    cp "$file" ".tigger/add_queue/$raw_filename"
+done 
+
+store_files "$curr_branch"
+commit_copy_msg=$(grep -E "branch.*: $branch " ".tigger/commit_log" | tail -n 1 | sed -E "s/branch: .* commit: [0-9]+ //")
+echo "branch: $curr_branch commit: $latest_commit_num_merge" "$commit_copy_msg" >> ".tigger/commit_log"
+
+# if new files are merged into branch, it is a commit
+if [ "$commit_merge" -eq 1 ]; then 
+    commit_num=$(cut -d' ' -f1 ".tigger/commit_tracker")
+    commit_num=$((commit_num + 1))
+    message="$3"
+    echo "Committed as commit $commit_num"
+    echo "branch: $curr_branch commit: $commit_num" "$message" >> ".tigger/commit_log"
+    echo "$commit_num $message" >".tigger/commit_tracker" 
+else 
+    # if no new files are merged into branch, it is a fast forward
+    echo "Fast-forward: no commit created"
+fi 

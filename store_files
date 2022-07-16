@@ -1,0 +1,15 @@
+#!/bin/dash
+
+branch="$1"
+
+store_name=".tigger/branch_storage/$branch"
+if ! [ -d "$store_name" ]; then 
+    mkdir "$store_name"
+    mkdir "$store_name/commit_queue"
+fi
+
+# i think we only need to store the commit's since the working_dir and index is shared
+
+
+# then store entire commit_queue
+cp -rT ".tigger/commit_queue" "$store_name/commit_queue"

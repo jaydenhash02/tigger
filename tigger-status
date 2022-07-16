@@ -1,0 +1,6 @@
+#!/bin/dash
+
+# so for every action we want to store everything in a file to track everything
+track_files
+
+grep -Ev "^$" ".tigger/status_tracker" | sort -t' ' -k1,1
