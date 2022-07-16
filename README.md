@@ -1,2 +1,2 @@
 # tigger
-a clone of git made using purely shell code
+a simple clone of git made using only shell code
